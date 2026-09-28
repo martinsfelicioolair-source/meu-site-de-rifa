@@ -6,69 +6,55 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Variável com a chave de acesso da sua conta do Mercado Pago
-const MERCADO_PAGO_TOKEN = process.env.MERCADO_PAGO_TOKEN;
+// Chave da API do Asaas cadastrada nas Environment Variables do Render
+const ASAAS_API_KEY = process.env.MERCADO_PAGO_TOKEN || process.env.ASAAS_API_KEY;
+const ASAAS_URL = 'https://www.asaas.com/api/v3';
 
-// Rota para gerar o Pix automático
 app.post('/api/criar-pix', async (req, res) => {
     try {
-        const { valor, descricao, email } = req.body;
+        const { valor, descricao, email, nome, telefone } = req.body;
 
-        const response = await axios.post(
-            'https://api.mercadopago.com/v1/payments',
-            {
-                transaction_amount: Number(valor),
-                description: descricao || 'Compra de Rifas',
-                payment_method_id: 'pix',
-                payer: {
-                    email: email || 'cliente@email.com'
-                }
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${MERCADO_PAGO_TOKEN}`,
-                    'Content-Type': 'application/json'
-                }
-            }
-        );
-
-        const paymentData = response.data;
-        const qrCode = paymentData.point_of_interaction.transaction_data.qr_code;
-        const qrCodeBase64 = paymentData.point_of_interaction.transaction_data.qr_code_base64;
-
-        res.json({
-            sucesso: true,
-            idPagamento: paymentData.id,
-            qrCode: qrCode,
-            qrCodeBase64: qrCodeBase64
+        // 1. Criar ou localizar o cliente no Asaas
+        const customerResponse = await axios.post(`${ASAAS_URL}/customers`, {
+            name: nome || 'Cliente Rifa',
+            email: email,
+            phone: telefone || '62999999999'
+        }, {
+            headers: { 'access_token': ASAAS_API_KEY }
         });
-    } catch (error) {
-        console.error('Erro ao gerar Pix:', error.response ? error.response.data : error.message);
-        res.status(500).json({ sucesso: false, erro: 'Erro ao gerar cobrança Pix' });
-    }
-});
 
-// Rota para consultar se o Pix foi pago
-app.get('/api/status-pagamento/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const response = await axios.get(`https://api.mercadopago.com/v1/payments/${id}`, {
-            headers: {
-                'Authorization': `Bearer ${MERCADO_PAGO_TOKEN}`
-            }
+        const customerId = customerResponse.data.id;
+
+        // 2. Criar a cobrança via Pix
+        const paymentResponse = await axios.post(`${ASAAS_URL}/payments`, {
+            customer: customerId,
+            billingType: 'PIX',
+            value: Number(valor),
+            dueDate: new Date().toISOString().split('T')[0],
+            description: descricao || 'Compra de Cotas - Rifa'
+        }, {
+            headers: { 'access_token': ASAAS_API_KEY }
+        });
+
+        const paymentId = paymentResponse.data.id;
+
+        // 3. Buscar o QR Code e o código copia e cola Pix
+        const qrCodeResponse = await axios.get(`${ASAAS_URL}/payments/${paymentId}/pixQrCode`, {
+            headers: { 'access_token': ASAAS_API_KEY }
         });
 
         res.json({
             sucesso: true,
-            status: response.data.status
+            idPagamento: paymentId,
+            qrCode: qrCodeResponse.data.payload,
+            qrCodeBase64: qrCodeResponse.data.encodedImage
         });
+
     } catch (error) {
-        console.error('Erro ao verificar status:', error.response ? error.response.data : error.message);
-        res.status(500).json({ sucesso: false, erro: 'Erro ao verificar status' });
+        console.error('Erro Asaas:', error.response?.data || error.message);
+        res.status(500).json({ sucesso: false, erro: 'Erro ao processar pagamento no Asaas.' });
     }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
