@@ -6,26 +6,26 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Chave da API do Asaas cadastrada nas Environment Variables do Render
 const ASAAS_API_KEY = process.env.MERCADO_PAGO_TOKEN || process.env.ASAAS_API_KEY;
 const ASAAS_URL = 'https://www.asaas.com/api/v3';
 
 app.post('/api/criar-pix', async (req, res) => {
     try {
-        const { valor, descricao, email, nome, telefone } = req.body;
+        const { valor, descricao, email, nome, cpf, telefone } = req.body;
 
-        // 1. Criar ou localizar o cliente no Asaas
+        // 1. Criar o cliente no Asaas (Exige CPF válido)
         const customerResponse = await axios.post(`${ASAAS_URL}/customers`, {
-            name: nome || 'Cliente Rifa',
+            name: nome,
+            cpfCnpj: cpf,
             email: email,
-            phone: telefone || '62999999999'
+            phone: telefone
         }, {
             headers: { 'access_token': ASAAS_API_KEY }
         });
 
         const customerId = customerResponse.data.id;
 
-        // 2. Criar a cobrança via Pix
+        // 2. Criar a cobrança Pix
         const paymentResponse = await axios.post(`${ASAAS_URL}/payments`, {
             customer: customerId,
             billingType: 'PIX',
@@ -38,7 +38,7 @@ app.post('/api/criar-pix', async (req, res) => {
 
         const paymentId = paymentResponse.data.id;
 
-        // 3. Buscar o QR Code e o código copia e cola Pix
+        // 3. Buscar QR Code e o código Pix
         const qrCodeResponse = await axios.get(`${ASAAS_URL}/payments/${paymentId}/pixQrCode`, {
             headers: { 'access_token': ASAAS_API_KEY }
         });
@@ -51,8 +51,9 @@ app.post('/api/criar-pix', async (req, res) => {
         });
 
     } catch (error) {
+        const detalheErro = error.response?.data?.errors?.[0]?.description || error.message;
         console.error('Erro Asaas:', error.response?.data || error.message);
-        res.status(500).json({ sucesso: false, erro: 'Erro ao processar pagamento no Asaas.' });
+        res.status(500).json({ sucesso: false, erro: detalheErro });
     }
 });
 
